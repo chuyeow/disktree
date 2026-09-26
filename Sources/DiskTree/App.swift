@@ -80,6 +80,14 @@ struct TopBar: View {
                     Text("\(Fmt.count(root.fileCount)) files · \(Fmt.count(model.summary?.dirCount ?? 0)) dirs · \(String(format: "%.1fs", model.scanSeconds))")
                         .font(Theme.num(12)).foregroundStyle(Theme.muted)
                 }
+                if model.root != nil && !model.scanning {
+                    HStack(spacing: 5) {
+                        Circle().fill(model.applyingChanges ? Theme.accent : Theme.safe).frame(width: 6, height: 6)
+                        Text(model.applyingChanges ? "Updating…" : "Live")
+                    }
+                    .font(Theme.ui(11, .medium)).foregroundStyle(Theme.muted)
+                    .help("Watching for changes on disk; changed folders are re-read automatically")
+                }
                 Spacer()
                 Button { chooseFolder(model) } label: { Label("Scan Folder…", systemImage: "folder") }
                 Button { model.scan() } label: { Label("Rescan", systemImage: "arrow.clockwise") }

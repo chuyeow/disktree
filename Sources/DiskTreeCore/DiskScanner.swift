@@ -28,6 +28,22 @@ public final class DiskScanner: @unchecked Sendable {
         return scanDirectory(path: path, siblings: [], inheritedKind: nil, inheritedReclaim: nil, depth: 0)
     }
 
+    /// Re-lists one directory, scanning only subdirectories not in `request.skip`. Safe off the main thread:
+    /// touches no existing nodes. Pass the result to `Node.install`.
+    public func rescan(_ request: RescanRequest) -> Node {
+        let parent = (request.path as NSString).deletingLastPathComponent
+        let siblings = request.isRoot ? [] : Set(list(parent).map(\.name))
+        return scanDirectory(path: request.path, siblings: siblings, inheritedKind: request.inheritedKind,
+                             inheritedReclaim: request.inheritedReclaim, depth: request.isRoot ? 0 : 1, skip: request.skip)
+    }
+
+    /// Synchronous rescan + install, for callers that own the tree on the current thread.
+    @discardableResult
+    public func applyRescan(of node: Node, deep: Bool) -> Node {
+        let request = node.rescanRequest(deep: deep)
+        return node.install(rescan(request), reusing: request.skip)
+    }
+
     private struct Entry {
         let name: String
         let isDirectory: Bool
@@ -49,7 +65,8 @@ public final class DiskScanner: @unchecked Sendable {
         }
     }
 
-    private func scanDirectory(path: String, siblings: Set<String>, inheritedKind: Kind?, inheritedReclaim: Reclaim?, depth: Int) -> Node {
+    private func scanDirectory(path: String, siblings: Set<String>, inheritedKind: Kind?, inheritedReclaim: Reclaim?, depth: Int,
+                               skip: Set<String> = []) -> Node {
         let entries = cancelled ? [] : list(path)
         let names = Set(entries.map(\.name))
         var own = Classifier.classifyDirectory(path: path, siblings: siblings, children: names)
@@ -68,7 +85,7 @@ public final class DiskScanner: @unchecked Sendable {
         }
         lock.withLock { _files += children.count; _bytes += fileBytes }
 
-        let dirs = entries.filter(\.isDirectory)
+        let dirs = entries.filter { $0.isDirectory && !skip.contains($0.name) }
         var sub = [Node?](repeating: nil, count: dirs.count)
         let scanChild = { (i: Int) -> Node in
             let d = dirs[i]
@@ -87,8 +104,10 @@ public final class DiskScanner: @unchecked Sendable {
         }
         children += sub.compactMap { $0 }
 
-        return Node.directory(name: depth == 0 ? path : (path as NSString).lastPathComponent,
-                              children: mergeSmall(children), kind: kind, reclaim: reclaim)
+        let node = Node.directory(name: depth == 0 ? path : (path as NSString).lastPathComponent,
+                                  children: mergeSmall(children), kind: kind, reclaim: reclaim)
+        if !skip.isEmpty { node.existingNames = names }
+        return node
     }
 
     /// Keeps big items; folds the rest into one aggregate leaf per (kind, reclaim).

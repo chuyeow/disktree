@@ -30,14 +30,16 @@ public final class Node: Identifiable, @unchecked Sendable {
     public let isAggregate: Bool
     public private(set) var size: Int64
     public private(set) var fileCount: Int
-    public let modified: Date
-    public let kind: Kind
+    public private(set) var modified: Date
+    public private(set) var kind: Kind
     public let reclaim: Reclaim?
+    /// Kind this directory hands down to its contents (own rule or inherited); nil = contents classify themselves.
+    public let passKind: Kind?
     public private(set) var children: [Node] = []
     public private(set) weak var parent: Node?
 
     public init(name: String, isDirectory: Bool, isAggregate: Bool = false, size: Int64, fileCount: Int,
-                modified: Date, kind: Kind, reclaim: Reclaim?, children: [Node] = []) {
+                modified: Date, kind: Kind, reclaim: Reclaim?, passKind: Kind? = nil, children: [Node] = []) {
         self.name = name
         self.isDirectory = isDirectory
         self.isAggregate = isAggregate
@@ -46,6 +48,7 @@ public final class Node: Identifiable, @unchecked Sendable {
         self.modified = modified
         self.kind = kind
         self.reclaim = reclaim
+        self.passKind = passKind
         self.children = children.sorted { $0.size > $1.size }
         for c in self.children { c.parent = self }
     }
@@ -56,7 +59,7 @@ public final class Node: Identifiable, @unchecked Sendable {
              size: children.reduce(0) { $0 + $1.size },
              fileCount: children.reduce(0) { $0 + $1.fileCount },
              modified: children.map(\.modified).max() ?? .distantPast,
-             kind: kind ?? dominantKind(children), reclaim: reclaim, children: children)
+             kind: kind ?? dominantKind(children), reclaim: reclaim, passKind: kind, children: children)
     }
 
     static func dominantKind(_ children: [Node]) -> Kind {
@@ -70,6 +73,55 @@ public final class Node: Identifiable, @unchecked Sendable {
     public var displayName: String { parent == nil ? (name as NSString).lastPathComponent : name }
     public var url: URL { URL(fileURLWithPath: path) }
     public var ancestors: [Node] { parent.map { $0.ancestors + [$0] } ?? [] }
+
+    /// Deepest directory in this tree on the way to `path`.
+    public func deepestNode(for path: String) -> Node? {
+        guard path == self.path || path.hasPrefix(self.path == "/" ? "/" : self.path + "/") else { return nil }
+        var node = self
+        for part in path.dropFirst(self.path.count).split(separator: "/") {
+            guard let next = node.children.first(where: { $0.isDirectory && !$0.isAggregate && $0.name == part }) else { break }
+            node = next
+        }
+        return node
+    }
+
+    /// What a background rescan of this directory needs, captured on the thread that owns the tree.
+    /// Shallow rescans skip existing subdirectories; `install` re-attaches them.
+    public func rescanRequest(deep: Bool) -> RescanRequest {
+        RescanRequest(path: path, isRoot: parent == nil, inheritedKind: parent?.passKind, inheritedReclaim: parent?.reclaim,
+                      skip: deep ? [] : Set(children.filter { $0.isDirectory && !$0.isAggregate }.map(\.name)))
+    }
+
+    /// Swaps this node for a freshly scanned copy: adopts the reused subdirectories that still exist, then
+    /// fixes ancestor totals. Returns the node now in the tree.
+    @discardableResult
+    public func install(_ fresh: Node, reusing skip: Set<String>) -> Node {
+        let reused = children.filter { skip.contains($0.name) && fresh.existingNames.contains($0.name) }
+        if !reused.isEmpty {
+            for n in reused { n.parent = fresh }
+            fresh.children = (fresh.children + reused).sorted { $0.size > $1.size }
+            fresh.size += reused.reduce(0) { $0 + $1.size }
+            fresh.fileCount += reused.reduce(0) { $0 + $1.fileCount }
+            fresh.modified = max(fresh.modified, reused.map(\.modified).max() ?? .distantPast)
+            if fresh.passKind == nil { fresh.kind = Node.dominantKind(fresh.children) }
+        }
+        guard let p = parent, let i = p.children.firstIndex(where: { $0 === self }) else { return fresh }
+        let dSize = fresh.size - size, dCount = fresh.fileCount - fileCount
+        p.children[i] = fresh
+        p.children.sort { $0.size > $1.size }
+        fresh.parent = p
+        parent = nil
+        var a: Node? = p
+        while let n = a {
+            n.size += dSize
+            n.fileCount += dCount
+            a = n.parent
+        }
+        return fresh
+    }
+
+    /// Names of the directory's entries at scan time; set only on rescanned directories.
+    var existingNames: Set<String> = []
 
     public func removeFromParent() {
         guard let p = parent else { return }
@@ -87,6 +139,14 @@ public final class Node: Identifiable, @unchecked Sendable {
         body(self)
         for c in children { c.forEach(body) }
     }
+}
+
+public struct RescanRequest: Sendable {
+    public let path: String
+    public let isRoot: Bool
+    public let inheritedKind: Kind?
+    public let inheritedReclaim: Reclaim?
+    public let skip: Set<String>
 }
 
 public struct Summary {

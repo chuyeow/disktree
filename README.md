@@ -7,6 +7,8 @@ delete shown hatched.
 - **By type**: Code, Git, Toolchains, Cache, Agent scratch, Synced, Media, Documents, Apps, System, Trash, Other.
 - **Reclaimable**: *Safe* (caches, build output, `node_modules`, DerivedData, Trash) and
   *Worth a look* (worktrees, Downloads, installers, simulators, Docker, device backups), each with a reason.
+- **Live**: after a scan, FSEvents tells DiskTree which folders change. Only those folders are
+  re-read, so deleting or adding things updates the map in seconds, with no full rescan.
 - Click to select, double-click to zoom in, ⌘↑ to zoom out, right-click to Reveal in Finder or Move to Trash.
   Clicking a type in the legend or sidebar highlights it.
 

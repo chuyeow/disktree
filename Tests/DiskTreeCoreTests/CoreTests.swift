@@ -152,3 +152,69 @@ import Testing
         #expect(b.reclaim?.tier == .safe)
     }
 }
+
+@Suite struct DeltaTests {
+    func makeTree() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("disktree-\(UUID().uuidString)")
+        for d in ["keep", "gone"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(d), withIntermediateDirectories: true)
+            try Data(count: 2_000_000).write(to: root.appendingPathComponent("\(d)/blob.bin"))
+        }
+        return root
+    }
+
+    @Test func shallowRescanDropsDeletedFolderAndReusesSiblings() throws {
+        let url = try makeTree()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let scanner = DiskScanner()
+        let tree = scanner.scan(url)
+        let keep = try #require(tree.children.first { $0.name == "keep" })
+        let before = tree.size
+
+        try FileManager.default.removeItem(at: url.appendingPathComponent("gone"))
+        try Data(count: 3_000_000).write(to: url.appendingPathComponent("new.bin"))
+        let updated = scanner.applyRescan(of: tree, deep: false)
+
+        #expect(!updated.children.contains { $0.name == "gone" })
+        #expect(updated.children.contains { $0.name == "new.bin" })
+        #expect(updated.children.first { $0.name == "keep" } === keep)
+        #expect(keep.parent === updated)
+        #expect(updated.modified >= keep.modified)
+        #expect(updated.size >= before + 1_000_000 - 100_000)
+    }
+
+    @Test func nestedRescanUpdatesAncestors() throws {
+        let url = try makeTree()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let scanner = DiskScanner()
+        let tree = scanner.scan(url)
+        let gone = try #require(tree.children.first { $0.name == "gone" })
+        try FileManager.default.removeItem(at: url.appendingPathComponent("gone/blob.bin"))
+
+        let target = try #require(tree.deepestNode(for: url.standardizedFileURL.path + "/gone/sub/x"))
+        #expect(target === gone)
+        _ = scanner.applyRescan(of: gone, deep: false)
+        #expect(tree.size < 2_500_000)
+        #expect(tree.children.first { $0.name == "gone" }?.size == 0)
+    }
+
+    @Test func watcherReportsChangedDirectory() async throws {
+        let url = try makeTree()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let real = url.path
+        let seen = LockedPaths()
+        let watcher = FileWatcher(path: url.path, since: FileWatcher.now) { changes in seen.add(changes.map(\.path)) }
+        defer { watcher.stop() }
+        try await Task.sleep(for: .milliseconds(500))
+        try Data(count: 10).write(to: url.appendingPathComponent("keep/touch.txt"))
+        for _ in 0..<40 where !seen.contains(real + "/keep") { try await Task.sleep(for: .milliseconds(250)) }
+        #expect(seen.contains(real + "/keep"))
+    }
+}
+
+final class LockedPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: Set<String> = []
+    func add(_ p: [String]) { lock.withLock { paths.formUnion(p) } }
+    func contains(_ p: String) -> Bool { lock.withLock { paths.contains(p) } }
+}
