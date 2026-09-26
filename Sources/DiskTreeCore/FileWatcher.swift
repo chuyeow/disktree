@@ -26,7 +26,12 @@ public final class FileWatcher: @unchecked Sendable {
         self.handler = handler
         root = path
         // FSEvents reports resolved paths (/private/var/...); map them back to the caller's spelling.
-        realRoot = path.withCString { p in realpath(p, nil).map { defer { free($0) }; return String(cString: $0) } } ?? path
+        if let resolved = realpath(path, nil) {
+            realRoot = String(cString: resolved)
+            free(resolved)
+        } else {
+            realRoot = path
+        }
         var ctx = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
                                        retain: nil, release: nil, copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
