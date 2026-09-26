@@ -1,0 +1,24 @@
+name: Build DMG
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dmg:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build DiskTree.app
+        run: ./scripts/bundle.sh
+      - name: Package DMG
+        run: |
+          mkdir dmg
+          cp -R DiskTree.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname DiskTree -srcfolder dmg -format UDZO -ov DiskTree.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiskTree-${{ github.sha }}
+          path: DiskTree.dmg

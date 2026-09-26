@@ -10,6 +10,12 @@ delete shown hatched.
 - Click to select, double-click to zoom in, ⌘↑ to zoom out, right-click to Reveal in Finder or Move to Trash.
   Clicking a type in the legend or sidebar highlights it.
 
+## Download
+
+Every merge to `main` builds `DiskTree.dmg`; grab it from the latest
+[Build DMG](../../actions/workflows/dmg.yml) run's artifacts. The app is ad-hoc signed, not
+notarized: on first launch, right-click it and choose Open.
+
 ## Build
 
 ```sh
