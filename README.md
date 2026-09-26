@@ -18,6 +18,10 @@ swift test               # classifier, treemap layout, scanner
 open DiskTree.app        # or: open DiskTree.app --args --root ~/code
 ```
 
+The app icon lives in `assets/`: `drive.png` is the generated render, and
+`scripts/make_icon.py` (needs Pillow) builds `AppIcon.icon` from it. `bundle.sh` compiles
+that with `actool`.
+
 Grant DiskTree **Full Disk Access** (System Settings → Privacy & Security). Without it,
 macOS shows privacy prompts for protected folders such as other apps' containers, and the
 scan waits until you answer them.
